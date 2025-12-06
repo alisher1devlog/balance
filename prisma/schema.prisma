@@ -1,14 +1,126 @@
-// This is your Prisma schema file,
-// learn more about it in the docs: https://pris.ly/d/prisma-schema
-
-// Looking for ways to speed up your queries, or scale easily with your serverless or edge functions?
-// Try Prisma Accelerate: https://pris.ly/cli/accelerate-init
-
 generator client {
-  provider = "prisma-client"
-  output   = "../generated/prisma"
+  provider = "prisma-client-js"
 }
 
 datasource db {
   provider = "postgresql"
+}
+
+
+enum MarketStatus {
+  ACTIVE    // Ishlayapti (To'lov qilgan)
+  INACTIVE  // Vaqtincha to'xtatilgan (O'zi o'chirgan)
+  BLOCKED   // Biz bloklaganmiz (Qoida buzgani uchun)
+  EXPIRED   // Obuna tugagan (Puli yo'q)
+  PENDING   // Yangi, hali tasdiqlanmagan
+}
+
+enum Role {
+  OWNER
+  STAFF
+}
+
+enum StaffStatus {
+  ACTIVE    // Ishlayapti
+  INACTIVE  // Vaqtincha (Ta'til, kasal)
+  BLOCKED   // Ishdan bo'shatilgan
+}
+
+enum TransactionType {
+  DEBT      // Qarz berish
+  PAYMENT   // To'lov qabul qilish
+}
+
+model Market {
+  id  String @id @default(uuid()) @db.Uuid
+  name String @db.VarChar(100)
+  ownerPhone String @unique @db.VarChar(20) @map("owner_phone") 
+  status MarketStatus @default(PENDING)
+  subEndDate DateTime @map("sub_end_date")
+  createdAt DateTime @default(now()) @map("created_at") 
+  updatedAt DateTime @updatedAt @map("updated_at") 
+
+  branches Branch[]
+  staffs Staff[]
+
+  @@map("markets")
+}
+
+model Branch {
+  id String @id @default(uuid()) @db.Uuid
+  marketId String @map("market_id") @db.Uuid
+  name String @db.VarChar(100)
+  address String @db.VarChar(255)
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  market Market @relation(fields: [marketId], references: [id])
+  staffs Staff[]
+  customers Customer[]
+  transactions Transaction[]
+
+  @@map("branches")
+}
+
+model Staff {
+  id String @id @default(uuid()) @db.Uuid
+  marketId String @map("market_id") @db.Uuid
+  branchId String? @map("branch_id") @db.Uuid
+  fullName String @db.VarChar(100) @map("full_name")
+  phone String @unique @db.VarChar(20)
+  password String @db.VarChar(255)
+  role Role 
+  status StaffStatus @default(ACTIVE)
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  market Market @relation(fields: [marketId], references: [id])
+  branch Branch? @relation(fields: [branchId], references: [id])
+  transactions Transaction[]
+
+  @@map("staffs")
+}
+
+model Customer {
+  id String @id @default(uuid()) @db.Uuid
+  branchId String @map("branch_id") @db.Uuid
+  fullName String @db.VarChar(100) @map("full_name")
+  phone String  @db.VarChar(20)
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  branch Branch @relation(fields: [branchId], references: [id]) 
+  balance      Balance?
+  transactions Transaction[]
+
+  @@map("customers")
+}
+
+model Balance {
+  id String @id @default(uuid()) @db.Uuid
+  customerId String @unique @map("customer_id") @db.Uuid
+  amount Decimal @db.Decimal(15, 2)
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  customer Customer @relation(fields: [customerId], references: [id])
+
+  @@map("balances")
+}
+
+model Transaction {
+  id String @id @default(uuid()) @db.Uuid
+  branchId String @map("branch_id") @db.Uuid
+  staffId String @map("staff_id") @db.Uuid
+  customerId String @map("customer_id") @db.Uuid
+  type TransactionType
+  amount Decimal @db.Decimal(10, 2)
+  description String? @db.Text
+  createdAt DateTime @default(now()) @map("created_at")
+
+  branch Branch @relation(fields: [branchId], references: [id])
+  staff Staff @relation(fields: [staffId], references: [id])
+  customer Customer @relation(fields: [customerId], references: [id])
+
+  @@map("transactions")
 }
