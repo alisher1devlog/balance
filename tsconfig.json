@@ -29,5 +29,10 @@
     "dist",
     "test",
     "**/*spec.ts"
-  ]
+  ],
+  "ts-node": {
+    "compilerOptions": {
+      "rootDir": "./"
+    }
+  }
 }

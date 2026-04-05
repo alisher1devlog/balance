@@ -21,14 +21,24 @@ export class AccessTokenStrategy extends PassportStrategy(Strategy, 'jwt') {
   }
 
   async validate(payload: { sub: string; email: string; role: string }) {
-    const user = await this.prisma.user.findUnique({
-      where: { id: payload.sub },
-    });
+    // Use raw SQL to bypass enum validation issues
+    const rows = await this.prisma.$queryRawUnsafe<any[]>(
+      `SELECT id, status FROM users WHERE id = $1::uuid LIMIT 1`,
+      payload.sub,
+    );
+
+    const user = rows && rows.length > 0 ? rows[0] : null;
 
     if (!user || user?.status !== 'ACTIVE') {
       throw new UnauthorizedException('User topilmadi yoki bloklangan');
     }
 
-    return user;
+    // Return payload with user info instead of full user object
+    return {
+      id: payload.sub,
+      email: payload.email,
+      role: payload.role,
+      status: user.status,
+    };
   }
 }
