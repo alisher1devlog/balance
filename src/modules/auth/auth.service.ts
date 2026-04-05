@@ -28,9 +28,12 @@ export class AuthService {
   // ── 1. OTP yuborish (faqat register uchun) ─────────
   async sendOtp(dto: SendOtpDto) {
     // Email allaqachon ro'yxatdan o'tganmi?
-    const existing = await this.prisma.user.findUnique({
-      where: { email: dto.email },
-    });
+    const rows = await this.prisma.$queryRawUnsafe<any[]>(
+      `SELECT id FROM users WHERE email = $1 LIMIT 1`,
+      dto.email,
+    );
+
+    const existing = rows && rows.length > 0;
 
     if (existing) {
       throw new ConflictException("Bu email allaqachon ro'yxatdan o'tgan");
@@ -108,10 +111,13 @@ export class AuthService {
       throw new BadRequestException('Email tasdiqlanmagan');
     }
 
-    // Yana bir bor tekshiramiz
-    const existing = await this.prisma.user.findUnique({
-      where: { email: payload.email },
-    });
+    // Yana bir bor tekshiramiz using raw SQL
+    const rows = await this.prisma.$queryRawUnsafe<any[]>(
+      `SELECT id FROM users WHERE email = $1 LIMIT 1`,
+      payload.email,
+    );
+
+    const existing = rows && rows.length > 0;
 
     if (existing) {
       throw new ConflictException("Bu email allaqachon ro'yxatdan o'tgan");
@@ -129,7 +135,11 @@ export class AuthService {
       },
     });
 
-    const tokens = await this.generateTokens(user.id, user.email, user.role);
+    const tokens = await this.generateTokens(
+      user.id,
+      user.email,
+      user.role as any,
+    );
 
     return {
       message: "Ro'yxatdan o'tish muvaffaqiyatli",
@@ -145,9 +155,14 @@ export class AuthService {
 
   // ── 4. Login ───────────────────────────────────────
   async login(dto: LoginDto) {
-    const user = await this.prisma.user.findUnique({
-      where: { email: dto.email },
-    });
+    // Use raw SQL to bypass Prisma enum validation issues with SUPERADMIN
+    const rows = await this.prisma.$queryRawUnsafe<any[]>(
+      `SELECT id, email, password, role, status, full_name as "fullName", market_id as "marketId", created_at as "createdAt", updated_at as "updatedAt", phone, plan_id as "planId", sub_end_date as "subEndDate" 
+       FROM users WHERE email = $1 LIMIT 1`,
+      dto.email,
+    );
+
+    const user = rows && rows.length > 0 ? rows[0] : null;
 
     if (!user) {
       throw new UnauthorizedException("Email yoki parol noto'g'ri");
@@ -178,9 +193,13 @@ export class AuthService {
 
   // ── 5. Refresh ─────────────────────────────────────
   async refresh(userId: string) {
-    const user = await this.prisma.user.findUnique({
-      where: { id: userId },
-    });
+    // Use raw SQL to bypass Prisma enum validation
+    const rows = await this.prisma.$queryRawUnsafe<any[]>(
+      `SELECT id, email, role, status FROM users WHERE id = $1::uuid LIMIT 1`,
+      userId,
+    );
+
+    const user = rows && rows.length > 0 ? rows[0] : null;
 
     if (!user || user.status !== 'ACTIVE') {
       throw new UnauthorizedException('User topilmadi yoki bloklangan');
@@ -191,30 +210,30 @@ export class AuthService {
 
   // ── 6. Me ──────────────────────────────────────────
   async getMe(userId: string) {
-    const user = await this.prisma.user.findUnique({
-      where: { id: userId },
-      select: {
-        id: true,
-        fullName: true,
-        email: true,
-        phone: true,
-        role: true,
-        status: true,
-        marketId: true,
-        subEndDate: true,
-        createdAt: true,
-      },
-    });
+    // Use raw SQL to bypass Prisma enum validation
+    const rows = await this.prisma.$queryRawUnsafe<any[]>(
+      `SELECT id, full_name as "fullName", email, phone, role, status, market_id as "marketId", sub_end_date as "subEndDate", created_at as "createdAt"
+       FROM users WHERE id = $1::uuid LIMIT 1`,
+      userId,
+    );
 
-    if (!user) throw new UnauthorizedException('User topilmadi');
-    return user;
+    if (!rows || rows.length === 0) {
+      throw new UnauthorizedException('User topilmadi');
+    }
+
+    return rows[0];
   }
 
   // ── 7. Change Password ─────────────────────────────
   async changePassword(userId: string, dto: ChangePasswordDto) {
-    const user = await this.prisma.user.findUnique({
-      where: { id: userId },
-    });
+    // Use raw SQL to bypass enum validation
+    const rows = await this.prisma.$queryRawUnsafe<any[]>(
+      `SELECT id, password FROM users WHERE id = $1::uuid LIMIT 1`,
+      userId,
+    );
+
+    const user = rows && rows.length > 0 ? rows[0] : null;
+
     if (!user) throw new UnauthorizedException('User topilmadi');
 
     const match = await bcrypt.compare(dto.oldPassword, user.password);
@@ -255,10 +274,13 @@ export class AuthService {
     fullName: string;
     picture: string;
   }) {
-    // Foydalanuvchi mavjudmi?
-    let user = await this.prisma.user.findUnique({
-      where: { email: googleUser.email },
-    });
+    // Foydalanuvchi mavjudmi? Use raw SQL to bypass enum validation
+    const rows = await this.prisma.$queryRawUnsafe<any[]>(
+      `SELECT id, email, role, status, full_name as "fullName", market_id as "marketId" FROM users WHERE email = $1 LIMIT 1`,
+      googleUser.email,
+    );
+
+    let user = rows && rows.length > 0 ? rows[0] : null;
 
     if (user) {
       // Login — mavjud user
@@ -267,7 +289,7 @@ export class AuthService {
       }
     } else {
       // Register — yangi user yaratish
-      user = await this.prisma.user.create({
+      const newUser = await this.prisma.user.create({
         data: {
           email: googleUser.email,
           fullName: googleUser.fullName,
@@ -276,6 +298,7 @@ export class AuthService {
           status: 'ACTIVE',
         },
       });
+      user = newUser as any;
     }
 
     const tokens = await this.generateTokens(user.id, user.email, user.role);
