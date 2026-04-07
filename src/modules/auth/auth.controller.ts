@@ -21,6 +21,8 @@ import { VerifyOtpDto } from './dto/verify-otp.dto';
 import { RegisterDto } from './dto/register.dto';
 import { LoginDto } from './dto/login.dto';
 import { ChangePasswordDto } from './dto/change-password.dto';
+import { ResetPasswordDto } from './dto/reset-password.dto';
+import { AuthMeResponse } from './dto/auth-me.response';
 import { AccessTokenGuard } from './guards/access-token.guard';
 import { RefreshTokenGuard } from './guards/refresh-token.guard';
 import { CurrentUser } from '../../common/decorators/current-user.decorator';
@@ -78,6 +80,19 @@ export class AuthController {
     return this.authService.refresh(user.sub);
   }
 
+  @Get('me')
+  @UseGuards(AccessTokenGuard)
+  @ApiBearerAuth('access-token')
+  @ApiOperation({ summary: 'Joriy foydalanuvchining ma\'lumotlari' })
+  @ApiResponse({
+    status: 200,
+    description: 'User information returned',
+    type: Object,
+  })
+  async me(@CurrentUser('id') userId: string): Promise<AuthMeResponse> {
+    return this.authService.me(userId);
+  }
+
   @Get('google')
   @UseGuards(GoogleGuard)
   @ApiOperation({ summary: 'Google orqali kirish' })
@@ -112,5 +127,19 @@ export class AuthController {
     @Body() dto: ChangePasswordDto,
   ) {
     return this.authService.changePassword(userId, dto);
+  }
+
+  @Post('reset-password')
+  @ApiOperation({ summary: 'Parolni unutdim → parol yangilash' })
+  @ApiResponse({
+    status: 201,
+    description: "Parol muvaffaqiyatli o'zgartirildi",
+  })
+  @ApiResponse({
+    status: 400,
+    description: "Token muddati o'tgan yoki email tasdiqlanmagan",
+  })
+  resetPassword(@Body() dto: ResetPasswordDto) {
+    return this.authService.resetPassword(dto.resetToken, dto.newPassword);
   }
 }
