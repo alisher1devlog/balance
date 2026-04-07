@@ -61,6 +61,48 @@ export class MarketsService {
     });
   }
 
+  // ── 3.5. Do'konning xodimlarini ko'rish ───────────
+  async findMarketUsers(marketId: string, currentUser: User) {
+    // Market mavjudmi?
+    const market = await this.prisma.market.findUnique({
+      where: { id: marketId },
+      select: { id: true, ownerId: true, name: true },
+    });
+
+    if (!market) {
+      throw new NotFoundException("Do'kon topilmadi");
+    }
+
+    // Access control: OWNER faqat o'z marketining xodimlarini ko'radi
+    if ((currentUser.role as any) !== 'SUPERADMIN' && market.ownerId !== currentUser.id) {
+      throw new ForbiddenException("Bu do'konning xodimlarini ko'rish huquqi yo'q");
+    }
+
+    // Shu marketga tegishli barcha userlarni qaytarish
+    const users = await this.prisma.user.findMany({
+      where: {
+        marketId: marketId,
+      },
+      select: {
+        id: true,
+        fullName: true,
+        email: true,
+        role: true,
+        status: true,
+        marketId: true,
+        phone: true,
+        createdAt: true,
+      },
+      orderBy: { createdAt: 'desc' },
+    });
+
+    return {
+      items: users,
+      total: users.length,
+      marketName: market.name,
+    };
+  }
+
   // ── 4. Do'kon tahrirlash ───────────────────────────
   async update(id: string, dto: UpdateMarketDto, userId: string) {
     const market = await this.prisma.market.findUnique({ where: { id } });

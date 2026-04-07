@@ -17,11 +17,13 @@ import {
 import { MarketsService } from './markets.service';
 import { CreateMarketDto } from './dto/create-market.dto';
 import { UpdateMarketDto } from './dto/update-market.dto';
+import { MarketUserResponse } from './dto/market-users.response';
+import { MarketUsersListResponse } from './dto/market-users-list.response';
 import { AccessTokenGuard } from '../auth/guards/access-token.guard';
 import { RolesGuard } from '../../common/guards/roles.guard';
 import { Roles } from '../../common/decorators/roles.decorator';
 import { CurrentUser } from '../../common/decorators/current-user.decorator';
-import { Role } from '@prisma/client';
+import { Role, User } from '@prisma/client';
 
 @ApiTags('Markets')
 @ApiBearerAuth('access-token')
@@ -51,6 +53,30 @@ export class MarketsController {
   @ApiOperation({ summary: "Bitta do'kon" })
   findOne(@Param('id') id: string) {
     return this.marketsService.findOne(id);
+  }
+
+  @Get(':id/users')
+  @UseGuards(RolesGuard)
+  @Roles('SUPERADMIN' as any, Role.OWNER)
+  @ApiOperation({ summary: "Do'konning xodimlarini ko'rish" })
+  @ApiResponse({
+    status: 200,
+    description: "Do'konga tegishli xodimlar ro'yxati",
+    type: MarketUsersListResponse,
+  })
+  @ApiResponse({
+    status: 404,
+    description: "Do'kon topilmadi",
+  })
+  @ApiResponse({
+    status: 403,
+    description: "Xodimlarni ko'rish huquqi yo'q",
+  })
+  findMarketUsers(
+    @Param('id') marketId: string,
+    @CurrentUser() currentUser: User,
+  ) {
+    return this.marketsService.findMarketUsers(marketId, currentUser);
   }
 
   @Patch(':id')

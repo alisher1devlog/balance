@@ -1,4 +1,4 @@
-import { IsEmail, IsString, Length } from 'class-validator';
+import { IsEmail, IsString, Length, IsOptional, IsIn } from 'class-validator';
 import { ApiProperty } from '@nestjs/swagger';
 
 export class VerifyOtpDto {
@@ -14,4 +14,13 @@ export class VerifyOtpDto {
   @ApiProperty({ example: 'eyJhbGciOiJIUzI1NiJ9...' })
   @IsString()
   otpToken!: string;
+
+  @ApiProperty({
+    example: 'register',
+    description: 'register yoki reset_password',
+    required: false,
+  })
+  @IsOptional()
+  @IsIn(['register', 'reset_password'])
+  purpose?: 'register' | 'reset_password';
 }

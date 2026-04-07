@@ -14,6 +14,8 @@ import { VerifyOtpDto } from './dto/verify-otp.dto';
 import { RegisterDto } from './dto/register.dto';
 import { LoginDto } from './dto/login.dto';
 import { ChangePasswordDto } from './dto/change-password.dto';
+import { ResetPasswordDto } from './dto/reset-password.dto';
+import { AuthMeResponse } from './dto/auth-me.response';
 import * as bcrypt from 'bcrypt';
 
 @Injectable()
@@ -25,24 +27,42 @@ export class AuthService {
     private mailService: MailService,
   ) { }
 
-  // ── 1. OTP yuborish (faqat register uchun) ─────────
+  // ── 1. OTP yuborish (register yoki forgot password uchun) ────────
   async sendOtp(dto: SendOtpDto) {
-    // Email allaqachon ro'yxatdan o'tganmi?
-    const rows = await this.prisma.$queryRawUnsafe<any[]>(
-      `SELECT id FROM users WHERE email = $1 LIMIT 1`,
-      dto.email,
-    );
+    const purpose = dto.purpose || 'register';
 
-    const existing = rows && rows.length > 0;
+    // Register uchun: email allaqachon ro'yxatdan o'tganmi?
+    if (purpose === 'register') {
+      const rows = await this.prisma.$queryRawUnsafe<any[]>(
+        `SELECT id FROM users WHERE email = $1 LIMIT 1`,
+        dto.email,
+      );
 
-    if (existing) {
-      throw new ConflictException("Bu email allaqachon ro'yxatdan o'tgan");
+      const existing = rows && rows.length > 0;
+
+      if (existing) {
+        throw new ConflictException("Bu email allaqachon ro'yxatdan o'tgan");
+      }
+    }
+
+    // Reset password uchun: email mavjudmi?
+    if (purpose === 'reset_password') {
+      const rows = await this.prisma.$queryRawUnsafe<any[]>(
+        `SELECT id FROM users WHERE email = $1 LIMIT 1`,
+        dto.email,
+      );
+
+      const existing = rows && rows.length > 0;
+
+      if (!existing) {
+        throw new ConflictException("Bu email ro'yxatdan o'tmagan");
+      }
     }
 
     const otp = Math.floor(100000 + Math.random() * 900000).toString();
 
     const otpToken = await this.jwtService.signAsync(
-      { email: dto.email, otp },
+      { email: dto.email, otp, purpose },
       {
         secret: this.configService.getOrThrow('JWT_OTP_SECRET'),
         expiresIn: '1m',
@@ -57,9 +77,9 @@ export class AuthService {
     };
   }
 
-  // ── 2. OTP tasdiqlash → emailToken olish ──────────
+  // ── 2. OTP tasdiqlash → emailToken yoki resetToken olish ────────
   async verifyOtp(dto: VerifyOtpDto) {
-    let payload: { email: string; otp: string };
+    let payload: { email: string; otp: string; purpose?: string };
 
     try {
       payload = await this.jwtService.verifyAsync(dto.otpToken, {
@@ -77,8 +97,31 @@ export class AuthService {
       throw new BadRequestException("OTP kod noto'g'ri");
     }
 
-    // Email tasdiqlangan — emailToken beramiz (5 daqiqa)
-    const emailToken = await this.jwtService.signAsync(
+    const purpose = payload.purpose || 'register';
+
+    // Purpose ni tasdiqlash
+    if (dto.purpose && dto.purpose !== purpose) {
+      throw new BadRequestException('Purpose mos kelmadi');
+    }
+
+    // Register uchun: emailToken (5 daqiqa)
+    if (purpose === 'register') {
+      const emailToken = await this.jwtService.signAsync(
+        { email: dto.email, verified: true },
+        {
+          secret: this.configService.getOrThrow('JWT_EMAIL_SECRET'),
+          expiresIn: '5m',
+        },
+      );
+
+      return {
+        message: 'Email tasdiqlandi',
+        emailToken,
+      };
+    }
+
+    // Reset password uchun: resetToken (5 daqiqa)
+    const resetToken = await this.jwtService.signAsync(
       { email: dto.email, verified: true },
       {
         secret: this.configService.getOrThrow('JWT_EMAIL_SECRET'),
@@ -88,7 +131,7 @@ export class AuthService {
 
     return {
       message: 'Email tasdiqlandi',
-      emailToken,
+      resetToken,
     };
   }
 
@@ -230,6 +273,88 @@ export class AuthService {
     });
 
     return { message: "Parol muvaffaqiyatli o'zgartirildi" };
+  }
+
+  // ── 8. Reset Password (Forgot Password) ─────────────
+  async resetPassword(resetToken: string, newPassword: string) {
+    let payload: { email: string; verified: boolean };
+
+    // resetToken tekshirish
+    try {
+      payload = await this.jwtService.verifyAsync(resetToken, {
+        secret: this.configService.getOrThrow('JWT_EMAIL_SECRET'),
+      });
+    } catch {
+      throw new BadRequestException("Token muddati o'tgan, qaytadan OTP oling");
+    }
+
+    if (!payload.verified) {
+      throw new BadRequestException('Email tasdiqlanmagan');
+    }
+
+    // User topish
+    const rows = await this.prisma.$queryRawUnsafe<any[]>(
+      `SELECT id FROM users WHERE email = $1::text LIMIT 1`,
+      payload.email,
+    );
+
+    const user = rows && rows.length > 0 ? rows[0] : null;
+
+    if (!user) {
+      throw new UnauthorizedException('User topilmadi');
+    }
+
+    // Parol hesh'lash va yangilash
+    const hashed = await bcrypt.hash(newPassword, 10);
+    await this.prisma.user.update({
+      where: { id: user.id },
+      data: { password: hashed },
+    });
+
+    return { message: "Parol muvaffaqiyatli o'zgartirildi" };
+  }
+
+  // ── 9. Get Current User Info ───────────────────────
+  async me(userId: string): Promise<AuthMeResponse> {
+    const rows = await this.prisma.$queryRawUnsafe<any[]>(
+      `SELECT id, email, role, status, full_name as "fullName", market_id as "marketId", phone, created_at as "createdAt", updated_at as "updatedAt"
+       FROM users WHERE id = $1::uuid LIMIT 1`,
+      userId,
+    );
+
+    const user = rows && rows.length > 0 ? rows[0] : null;
+
+    if (!user) {
+      throw new UnauthorizedException('User topilmadi');
+    }
+
+    const response: any = {
+      id: user.id,
+      email: user.email,
+      fullName: user.fullName,
+      role: user.role,
+      status: user.status,
+      phone: user.phone,
+      createdAt: user.createdAt.toISOString(),
+      updatedAt: user.updatedAt.toISOString(),
+    };
+
+    // Include marketId and marketName for non-SUPERADMIN roles
+    if (user.role !== 'SUPERADMIN' && user.marketId) {
+      response.marketId = user.marketId;
+
+      // Get market name for convenience
+      const marketRows = await this.prisma.$queryRawUnsafe<any[]>(
+        `SELECT name FROM markets WHERE id = $1::uuid LIMIT 1`,
+        user.marketId,
+      );
+
+      if (marketRows && marketRows.length > 0) {
+        response.marketName = marketRows[0].name;
+      }
+    }
+
+    return response as AuthMeResponse;
   }
 
   // ── Token generator ────────────────────────────────
