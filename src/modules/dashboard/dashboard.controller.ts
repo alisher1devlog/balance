@@ -17,11 +17,11 @@ import { Role, User } from '@prisma/client';
 @UseGuards(AccessTokenGuard, RolesGuard)
 @Controller('dashboard')
 export class DashboardController {
-  constructor(private dashboardService: DashboardService) {}
+  constructor(private dashboardService: DashboardService) { }
 
   @Get('summary')
-  @Roles(Role.SUPERADMIN, Role.OWNER, Role.ADMIN, Role.MANAGER)
-  @ApiOperation({ summary: 'Umumiy statistika' })
+  @Roles(Role.SUPERADMIN, Role.OWNER, Role.ADMIN, Role.MANAGER, Role.SELLER)
+  @ApiOperation({ summary: 'Umumiy statistika (Role-based filtering)' })
   @ApiQuery({ name: 'marketId', required: true })
   getSummary(@Query('marketId') marketId: string, @CurrentUser() user: User) {
     return this.dashboardService.getSummary(marketId, user);

@@ -1,36 +1,35 @@
 import {
   IsOptional,
   IsString,
-  IsNumberString,
+  IsNumber,
   IsEnum,
-  ValidateIf,
 } from 'class-validator';
 import { ApiPropertyOptional } from '@nestjs/swagger';
-import { Role, UserStatus } from '@prisma/client';
+import { UserStatus } from '@prisma/client';
 import { Type } from 'class-transformer';
 
 export class GetMarketUsersQueryDto {
   @ApiPropertyOptional({
-    example: '1',
+    example: 1,
     description: 'Page raqami (default: 1)',
   })
   @IsOptional()
-  @IsNumberString()
   @Type(() => Number)
+  @IsNumber()
   page?: number = 1;
 
   @ApiPropertyOptional({
-    example: '10',
+    example: 10,
     description: 'Bir sahifada nechta natija (default: 10, max: 100)',
   })
   @IsOptional()
-  @IsNumberString()
   @Type(() => Number)
+  @IsNumber()
   limit?: number = 10;
 
   @ApiPropertyOptional({
     example: 'Ali',
-    description: "Qidirish: ism, familiya, email yoki telefon bo'yicha",
+    description: "Qidirish: ism, email yoki telefon bo'yicha",
   })
   @IsOptional()
   @IsString()
@@ -46,22 +45,13 @@ export class GetMarketUsersQueryDto {
   status?: UserStatus;
 
   @ApiPropertyOptional({
-    example: 'SELLER',
-    enum: [Role.ADMIN, Role.MANAGER, Role.SELLER],
-    description: "Rolle bo'yicha filter",
-  })
-  @IsOptional()
-  @IsEnum([Role.ADMIN, Role.MANAGER, Role.SELLER])
-  role?: string;
-
-  @ApiPropertyOptional({
     example: 'createdAt',
     enum: ['createdAt', 'fullName'],
-    description: 'Tartiblash turi: createdAt, fullName (default: createdAt)',
+    description: 'Tartiblash turi (foydalanilmaydi)',
   })
   @IsOptional()
-  @IsEnum(['createdAt', 'fullName'])
-  sortBy?: 'createdAt' | 'fullName' = 'createdAt';
+  @IsString()
+  sortBy?: string;
 
   @ApiPropertyOptional({
     example: 'desc',

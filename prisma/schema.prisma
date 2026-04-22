@@ -94,39 +94,24 @@ model Category {
 }
 
 model Product {
-  id            String             @id @default(uuid()) @db.Uuid
-  marketId      String             @map("market_id") @db.Uuid
-  categoryId    String             @map("category_id") @db.Uuid
-  name          String             @db.VarChar(200)
+  id            String         @id @default(uuid()) @db.Uuid
+  marketId      String         @map("market_id") @db.Uuid
+  categoryId    String         @map("category_id") @db.Uuid
+  name          String         @db.VarChar(200)
   description   String?
-  imageUrl      String?            @map("image_url")
-  stock         Int                @default(0)
-  basePrice     Decimal            @map("base_price") @db.Decimal(15, 2)
-  status        ProductStatus      @default(ACTIVE)
-  createdAt     DateTime           @default(now()) @map("created_at")
-  updatedAt     DateTime           @updatedAt @map("updated_at")
+  imageUrl      String?        @map("image_url")
+  stock         Int            @default(0)
+  basePrice     Decimal        @map("base_price") @db.Decimal(15, 2)
+  status        ProductStatus  @default(ACTIVE)
+  createdAt     DateTime       @default(now()) @map("created_at")
+  updatedAt     DateTime       @updatedAt @map("updated_at")
   contractItems ContractItem[]
-  pricePlans    ProductPricePlan[]
-  category      Category           @relation(fields: [categoryId], references: [id])
-  market        Market             @relation(fields: [marketId], references: [id])
+  category      Category       @relation(fields: [categoryId], references: [id])
+  market        Market         @relation(fields: [marketId], references: [id])
 
   @@index([marketId])
   @@index([categoryId])
   @@map("products")
-}
-
-model ProductPricePlan {
-  id            String         @id @default(uuid()) @db.Uuid
-  productId     String         @map("product_id") @db.Uuid
-  termMonths    Int            @map("term_months")
-  interestRate  Decimal        @map("interest_rate") @db.Decimal(5, 2)
-  totalPrice    Decimal        @map("total_price") @db.Decimal(15, 2)
-  monthlyPrice  Decimal        @map("monthly_price") @db.Decimal(15, 2)
-  contractItems ContractItem[]
-  product       Product        @relation(fields: [productId], references: [id])
-
-  @@unique([productId, termMonths])
-  @@map("product_price_plans")
 }
 
 model Customer {
@@ -186,19 +171,15 @@ model Contract {
 }
 
 model ContractItem {
-  id           String           @id @default(uuid()) @db.Uuid
-  contractId   String           @map("contract_id") @db.Uuid
-  productId    String           @map("product_id") @db.Uuid
-  pricePlanId  String           @map("price_plan_id") @db.Uuid
-  productName  String           @map("product_name") @db.VarChar(200)
-  quantity     Int              @default(1)
-  basePrice    Decimal          @map("base_price") @db.Decimal(15, 2)
-  interestRate Decimal          @map("interest_rate") @db.Decimal(5, 2)
-  totalPrice   Decimal          @map("total_price") @db.Decimal(15, 2)
-  monthlyPrice Decimal          @map("monthly_price") @db.Decimal(15, 2)
-  contract     Contract         @relation(fields: [contractId], references: [id])
-  pricePlan    ProductPricePlan @relation(fields: [pricePlanId], references: [id])
-  product      Product          @relation(fields: [productId], references: [id])
+  id          String   @id @default(uuid()) @db.Uuid
+  contractId  String   @map("contract_id") @db.Uuid
+  productId   String   @map("product_id") @db.Uuid
+  productName String   @map("product_name") @db.VarChar(200)
+  quantity    Int      @default(1)
+  unitPrice   Decimal  @map("unit_price") @db.Decimal(15, 2)
+  totalPrice  Decimal  @map("total_price") @db.Decimal(15, 2)
+  contract    Contract @relation(fields: [contractId], references: [id])
+  product     Product  @relation(fields: [productId], references: [id])
 
   @@map("contract_items")
 }

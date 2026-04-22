@@ -3,6 +3,7 @@ import {
   NotFoundException,
   ForbiddenException,
   ConflictException,
+  BadRequestException,
 } from '@nestjs/common';
 import { PrismaService } from '../../prisma/prisma.service';
 import { CreateCategoryDto } from './dto/create-category.dto';
@@ -11,7 +12,7 @@ import { Role, User } from '@prisma/client';
 
 @Injectable()
 export class CategoriesService {
-  constructor(private prisma: PrismaService) {}
+  constructor(private prisma: PrismaService) { }
 
   private async checkMarketAccess(marketId: string, currentUser: User) {
     const market = await this.prisma.market.findUnique({
@@ -27,6 +28,10 @@ export class CategoriesService {
   }
 
   async findAll(marketId: string, currentUser: User, search?: string) {
+    if (!marketId || !marketId.trim()) {
+      throw new BadRequestException('Market ID kerak. Marketni tanlang.');
+    }
+
     await this.checkMarketAccess(marketId, currentUser);
 
     // Build where conditions

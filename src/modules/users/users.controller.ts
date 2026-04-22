@@ -24,12 +24,12 @@ import { Role, User } from '@prisma/client';
 @UseGuards(AccessTokenGuard)
 @Controller('users')
 export class UsersController {
-  constructor(private usersService: UsersService) {}
+  constructor(private usersService: UsersService) { }
 
   @Get()
   @UseGuards(RolesGuard)
-  @Roles('SUPERADMIN' as any, Role.OWNER)
-  @ApiOperation({ summary: 'Barcha userlar' })
+  @Roles(Role.SUPERADMIN, Role.OWNER, Role.ADMIN, Role.MANAGER, Role.SELLER)
+  @ApiOperation({ summary: 'Barcha userlar (Role-based filtering)' })
   findAll(@CurrentUser() currentUser: User) {
     return this.usersService.findAll(currentUser);
   }

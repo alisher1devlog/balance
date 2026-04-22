@@ -2,6 +2,7 @@ import { NestFactory } from '@nestjs/core';
 import { ValidationPipe, Logger, BadRequestException } from '@nestjs/common';
 import { SwaggerModule, DocumentBuilder } from '@nestjs/swagger';
 import { AppModule } from './app.module';
+import { RequestLoggingInterceptor } from './common/interceptors/request-logging.interceptor';
 import * as net from 'net';
 import * as path from 'path';
 import * as fs from 'fs/promises';
@@ -89,52 +90,86 @@ async function bootstrap() {
       transformOptions: { enableImplicitConversion: true },
       exceptionFactory: (errors) => {
         const messages: Record<string, string> = {};
+        const fieldLabels: Record<string, string> = {
+          customerId: 'Xaridor ID',
+          productId: 'Mahsulot ID',
+          downPayment: "Boshlang'ich to'lov",
+          months: 'Muddat (oylar)',
+          termMonths: 'Muddat (oylar)',
+          marketId: 'Bozor ID',
+          startDate: 'Boshlanish sanasi',
+          note: 'Izoh',
+        };
 
         errors.forEach((error) => {
           if (error.property) {
-            // Property xatolari (ruxsat berilmagan fieldlar)
-            if (error.constraints && error.constraints['isUuid']) {
-              messages[error.property] =
-                `${error.property} togri UUID formatda bo'lishi kerak`;
-            } else if (error.constraints && error.constraints['isString']) {
-              messages[error.property] =
-                `${error.property} matn bo'lishi kerak`;
-            } else if (error.constraints && error.constraints['minLength']) {
-              messages[error.property] =
-                `${error.property} "${error.constraints['minLength']}" ta belgidan kam bo'lmasligi kerak`;
-            } else if (error.constraints && error.constraints['maxLength']) {
-              messages[error.property] =
-                `${error.property} "${error.constraints['maxLength']}" ta belgidan ortiq bo'lmasligi kerak`;
-            } else if (error.constraints && error.constraints['isEmail']) {
-              messages[error.property] =
-                `${error.property} tog'ri email bo'lishi kerak`;
-            } else if (error.constraints && error.constraints['isNotEmpty']) {
-              messages[error.property] =
-                `${error.property} bo'sh bo'lmasligi kerak`;
-            } else if (
-              (error.constraints && error.constraints['whitelistValidation']) ||
-              error.property.includes('should_not_exist')
-            ) {
-              // DTO'da yo'q bo'lgan fieldlar
-              messages[error.property] =
-                `${error.property} kiritilmasligi kerak`;
-            } else if (error.constraints) {
-              // Boshqa xatolar
-              messages[error.property] = Object.values(
-                error.constraints,
-              )[0] as string;
+            const fieldLabel = fieldLabels[error.property] || error.property;
+
+            if (error.constraints) {
+              // Prioritize custom messages from decorators
+              const constraintKey = Object.keys(error.constraints)[0];
+              let message = error.constraints[constraintKey];
+
+              // If no custom message, build one
+              if (!message) {
+                if (constraintKey === 'isUuid') {
+                  message = `${fieldLabel} togri UUID formatda bo'lishi kerak`;
+                } else if (constraintKey === 'isInt') {
+                  message = `${fieldLabel} butun son bo'lishi kerak`;
+                } else if (constraintKey === 'isNumber') {
+                  message = `${fieldLabel} raqam bo'lishi kerak`;
+                } else if (constraintKey === 'min') {
+                  const minVal =
+                    error.constraints['minProperty'] ||
+                    error.constraints[constraintKey];
+                  message = `${fieldLabel} ${minVal} dan kam bo'lmaydi`;
+                } else if (constraintKey === 'max') {
+                  const maxVal =
+                    error.constraints['maxProperty'] ||
+                    error.constraints[constraintKey];
+                  message = `${fieldLabel} ${maxVal} dan ortiq bo'lmaydi`;
+                } else if (constraintKey === 'isString') {
+                  message = `${fieldLabel} matn bo'lishi kerak`;
+                } else if (constraintKey === 'isEmail') {
+                  message = `${fieldLabel} tog'ri email bo'lishi kerak`;
+                } else if (constraintKey === 'isNotEmpty') {
+                  message = `${fieldLabel} bo'sh bo'lmasligi kerak`;
+                } else if (constraintKey === 'isDateString') {
+                  message = `${fieldLabel} to'g'ri sana formatida bo'lishi kerak (YYYY-MM-DD)`;
+                } else if (
+                  constraintKey === 'whitelistValidation' ||
+                  error.property.includes('should_not_exist')
+                ) {
+                  message = `${fieldLabel} kiritilmasligi kerak`;
+                } else {
+                  message = Object.values(error.constraints)[0] as string;
+                }
+              }
+
+              messages[error.property] = message;
             }
           }
         });
 
+        // If there are validation errors, include them with a more helpful message
+        const errorMessage =
+          Object.values(messages).length > 0
+            ? Object.values(messages).join('; ')
+            : 'Validatsiya xatosi';
+
         return new BadRequestException({
           statusCode: 400,
-          message: 'Validatsiya xatosi',
+          message: errorMessage,
           errors: messages,
+          details:
+            "Iltimos, barcha qatorni to'g'ri to'ldiring va qayta urinib ko'ring.",
         });
       },
     }),
   );
+
+  // Register global interceptors
+  app.useGlobalInterceptors(new RequestLoggingInterceptor());
 
   app.setGlobalPrefix('api');
 

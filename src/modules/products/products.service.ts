@@ -7,7 +7,6 @@ import {
 import { PrismaService } from '../../prisma/prisma.service';
 import { CreateProductDto } from './dto/create-product.dto';
 import { UpdateProductDto } from './dto/update-product.dto';
-import { CreatePricePlanDto } from './dto/create-price-plan.dto';
 import { ProductStatus, Role, User } from '@prisma/client';
 
 @Injectable()
@@ -27,13 +26,37 @@ export class ProductsService {
     return market;
   }
 
-  async findAll(marketId: string, currentUser: User) {
-    await this.checkMarketAccess(marketId, currentUser);
+  async findAll(marketId: string, search?: string, currentUser?: User) {
+    await this.checkMarketAccess(marketId, currentUser as User);
+    // Normalize search query
+    const searchQuery = search ? search.trim() : '';
+    const hasSearch = searchQuery.length > 0;
+
+    // Build where clause with conditional search
+    const where: any = hasSearch
+      ? {
+          marketId,
+          OR: [
+            { name: { contains: searchQuery, mode: 'insensitive' as const } },
+            {
+              description: {
+                contains: searchQuery,
+                mode: 'insensitive' as const,
+              },
+            },
+            {
+              category: {
+                name: { contains: searchQuery, mode: 'insensitive' as const },
+              },
+            },
+          ],
+        }
+      : { marketId };
+
     return this.prisma.product.findMany({
-      where: { marketId },
+      where,
       include: {
         category: { select: { id: true, name: true } },
-        pricePlans: true,
         _count: { select: { contractItems: true } },
       },
       orderBy: { createdAt: 'desc' },
@@ -61,7 +84,7 @@ export class ProductsService {
         basePrice: dto.basePrice,
         status: 'ACTIVE',
       },
-      include: { category: true, pricePlans: true },
+      include: { category: true },
     });
   }
 
@@ -70,7 +93,6 @@ export class ProductsService {
       where: { id },
       include: {
         category: { select: { id: true, name: true } },
-        pricePlans: { orderBy: { termMonths: 'asc' } },
       },
     });
     if (!product) throw new NotFoundException('Mahsulot topilmadi');
@@ -92,7 +114,7 @@ export class ProductsService {
         stock: dto.stock,
         basePrice: dto.basePrice,
       },
-      include: { category: true, pricePlans: true },
+      include: { category: true },
     });
   }
 
@@ -108,7 +130,7 @@ export class ProductsService {
     });
   }
 
-  async remove(id: string, currentUser: User) {
+  async archiveProduct(id: string, currentUser: User) {
     const product = await this.prisma.product.findUnique({ where: { id } });
     if (!product) throw new NotFoundException('Mahsulot topilmadi');
     await this.checkMarketAccess(product.marketId, currentUser);
@@ -117,78 +139,26 @@ export class ProductsService {
       where: { id },
       data: { status: 'ARCHIVED' },
     });
-    return { message: 'Mahsulot arxivlandi' };
+    return { message: 'Mahsulot muvaffaqiyatli arxivlandi' };
   }
 
-  // ── Price Plans ────────────────────────────────────
-  async createPricePlan(
-    productId: string,
-    dto: CreatePricePlanDto,
-    currentUser: User,
-  ) {
+  async deleteProduct(id: string, currentUser: User) {
     const product = await this.prisma.product.findUnique({
-      where: { id: productId },
+      where: { id },
+      include: {
+        contractItems: { select: { id: true } },
+      },
     });
     if (!product) throw new NotFoundException('Mahsulot topilmadi');
     await this.checkMarketAccess(product.marketId, currentUser);
 
-    const existing = await this.prisma.productPricePlan.findUnique({
-      where: {
-        productId_termMonths: { productId, termMonths: dto.termMonths },
-      },
-    });
-    if (existing)
+    if ((product.contractItems as any).length > 0) {
       throw new ConflictException(
-        'Bu muddat uchun narx rejasi allaqachon mavjud',
+        "Bu mahsulot qayta o'tkazuvchi shartnomalardan foydalanilmoqda, uni o'chirish mumkin emas",
       );
+    }
 
-    return this.prisma.productPricePlan.create({
-      data: {
-        productId,
-        termMonths: dto.termMonths,
-        interestRate: dto.interestRate,
-        totalPrice: dto.totalPrice,
-        monthlyPrice: dto.monthlyPrice,
-      },
-    });
-  }
-
-  async updatePricePlan(
-    productId: string,
-    planId: string,
-    dto: CreatePricePlanDto,
-    currentUser: User,
-  ) {
-    const product = await this.prisma.product.findUnique({
-      where: { id: productId },
-    });
-    if (!product) throw new NotFoundException('Mahsulot topilmadi');
-    await this.checkMarketAccess(product.marketId, currentUser);
-
-    const plan = await this.prisma.productPricePlan.findUnique({
-      where: { id: planId },
-    });
-    if (!plan) throw new NotFoundException('Narx rejasi topilmadi');
-
-    return this.prisma.productPricePlan.update({
-      where: { id: planId },
-      data: {
-        termMonths: dto.termMonths,
-        interestRate: dto.interestRate,
-        totalPrice: dto.totalPrice,
-        monthlyPrice: dto.monthlyPrice,
-      },
-    });
-  }
-
-  async removePricePlan(productId: string, planId: string, currentUser: User) {
-    const product = await this.prisma.product.findUnique({
-      where: { id: productId },
-    });
-    if (!product) throw new NotFoundException('Mahsulot topilmadi');
-    await this.checkMarketAccess(product.marketId, currentUser);
-
-    await this.prisma.productPricePlan.delete({ where: { id: planId } });
-    return { message: "Narx rejasi o'chirildi" };
+    await this.prisma.product.delete({ where: { id } });
+    return { message: "Mahsulot doimiy o'chirildi" };
   }
 }

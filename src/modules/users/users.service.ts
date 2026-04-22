@@ -13,27 +13,30 @@ import * as bcrypt from 'bcrypt';
 
 @Injectable()
 export class UsersService {
-  constructor(private prisma: PrismaService) {}
+  constructor(private prisma: PrismaService) { }
 
-  // Barcha userlar
+  // Barcha userlar - Role-based filtering
   async findAll(currentUser: User) {
+    const select = {
+      id: true,
+      fullName: true,
+      email: true,
+      phone: true,
+      role: true,
+      status: true,
+      marketId: true,
+      createdAt: true,
+    };
+
+    // SUPERADMIN - barcha users
     if ((currentUser.role as any) === 'SUPERADMIN') {
       return this.prisma.user.findMany({
-        select: {
-          id: true,
-          fullName: true,
-          email: true,
-          phone: true,
-          role: true,
-          status: true,
-          marketId: true,
-          createdAt: true,
-        },
+        select,
         orderBy: { createdAt: 'desc' },
       });
     }
 
-    // OWNER faqat o'z market userlarini ko'radi
+    // OWNER - faqat o'z marketining users
     if (currentUser.role === Role.OWNER) {
       return this.prisma.user.findMany({
         where: {
@@ -42,16 +45,26 @@ export class UsersService {
             ownerId: currentUser.id,
           },
         },
-        select: {
-          id: true,
-          fullName: true,
-          email: true,
-          phone: true,
-          role: true,
-          status: true,
-          marketId: true,
-          createdAt: true,
+        select,
+        orderBy: { createdAt: 'desc' },
+      });
+    }
+
+    // ADMIN, MANAGER, SELLER - faqat o'z marketining users
+    if (
+      currentUser.role === Role.ADMIN ||
+      currentUser.role === Role.MANAGER ||
+      currentUser.role === Role.SELLER
+    ) {
+      if (!currentUser.marketId) {
+        throw new ForbiddenException('Market tayinlanmagan');
+      }
+
+      return this.prisma.user.findMany({
+        where: {
+          marketId: currentUser.marketId,
         },
+        select,
         orderBy: { createdAt: 'desc' },
       });
     }
@@ -162,7 +175,7 @@ export class UsersService {
     });
   }
 
-  // Bitta user
+  // Bitta user - Role-based access
   async findOne(id: string, currentUser: User) {
     const user = await this.prisma.user.findUnique({
       where: { id },
@@ -182,34 +195,75 @@ export class UsersService {
       throw new NotFoundException('User topilmadi');
     }
 
-    // OWNER faqat o'z xodimlarini ko'radi
-    if (currentUser.role === Role.OWNER && user.marketId) {
-      const market = await this.prisma.market.findFirst({
-        where: { id: user.marketId, ownerId: currentUser.id },
-      });
-      if (!market) {
-        throw new ForbiddenException("Ruxsat yo'q");
-      }
+    // SUPERADMIN - barcha users
+    if ((currentUser.role as any) === 'SUPERADMIN') {
+      return user;
     }
 
-    return user;
+    // OWNER - faqat o'z xodimlarini ko'radi
+    if (currentUser.role === Role.OWNER) {
+      if (user.marketId) {
+        const market = await this.prisma.market.findFirst({
+          where: { id: user.marketId, ownerId: currentUser.id },
+        });
+        if (!market) {
+          throw new ForbiddenException("Ruxsat yo'q");
+        }
+      }
+      return user;
+    }
+
+    // ADMIN, MANAGER, SELLER - faqat o'z marketining users
+    if (
+      currentUser.role === Role.ADMIN ||
+      currentUser.role === Role.MANAGER ||
+      currentUser.role === Role.SELLER
+    ) {
+      if (user.marketId !== currentUser.marketId) {
+        throw new ForbiddenException("Ruxsat yo'q");
+      }
+      return user;
+    }
+
+    throw new ForbiddenException("Ruxsat yo'q");
   }
 
-  // User tahrirlash
+  // User tahrirlash - Role-based access
   async update(id: string, dto: UpdateUserDto, currentUser: User) {
     const user = await this.prisma.user.findUnique({ where: { id } });
     if (!user) {
       throw new NotFoundException('User topilmadi');
     }
 
-    // OWNER faqat o'z xodimlarini tahrirlaydi
-    if (currentUser.role === Role.OWNER && user.marketId) {
+    // SUPERADMIN - barcha users tahrirlaydi
+    if ((currentUser.role as any) === 'SUPERADMIN') {
+      // Fall through to update
+    }
+    // OWNER - faqat o'z xodimlarini tahrirlaydi
+    else if (currentUser.role === Role.OWNER && user.marketId) {
       const market = await this.prisma.market.findFirst({
         where: { id: user.marketId, ownerId: currentUser.id },
       });
       if (!market) {
         throw new ForbiddenException("Ruxsat yo'q");
       }
+    }
+    // ADMIN - faqat o'z marketining users
+    else if (currentUser.role === Role.ADMIN) {
+      if (user.marketId !== currentUser.marketId) {
+        throw new ForbiddenException("Ruxsat yo'q");
+      }
+    }
+    // MANAGER, SELLER - o'z marketining userlarini tahrirlaya oladi
+    else if (
+      currentUser.role === Role.MANAGER ||
+      currentUser.role === Role.SELLER
+    ) {
+      if (user.marketId !== currentUser.marketId) {
+        throw new ForbiddenException("Ruxsat yo'q");
+      }
+    } else {
+      throw new ForbiddenException("Ruxsat yo'q");
     }
 
     return this.prisma.user.update({
@@ -233,7 +287,7 @@ export class UsersService {
     });
   }
 
-  // User o'chirish
+  // User o'chirish - Role-based access
   async remove(id: string, currentUser: User) {
     const user = await this.prisma.user.findUnique({ where: { id } });
     if (!user) {
@@ -244,8 +298,12 @@ export class UsersService {
       throw new ForbiddenException("O'zingizni o'chira olmaysiz");
     }
 
-    // OWNER faqat o'z xodimlarini o'chiradi
-    if (currentUser.role === Role.OWNER && user.marketId) {
+    // SUPERADMIN - barcha users o'chiradi
+    if ((currentUser.role as any) === 'SUPERADMIN') {
+      // Fall through to delete
+    }
+    // OWNER - faqat o'z xodimlarini o'chiradi
+    else if (currentUser.role === Role.OWNER && user.marketId) {
       const market = await this.prisma.market.findFirst({
         where: { id: user.marketId, ownerId: currentUser.id },
       });
@@ -253,12 +311,33 @@ export class UsersService {
         throw new ForbiddenException("Ruxsat yo'q");
       }
     }
+    // ADMIN - faqat o'z marketining users
+    else if (currentUser.role === Role.ADMIN) {
+      if (user.marketId !== currentUser.marketId) {
+        throw new ForbiddenException("Ruxsat yo'q");
+      }
+    }
+    // MANAGER - faqat o'z marketining lower role users
+    else if (currentUser.role === Role.MANAGER) {
+      if (user.marketId !== currentUser.marketId) {
+        throw new ForbiddenException("Ruxsat yo'q");
+      }
+      if (user.role === Role.ADMIN || user.role === Role.MANAGER) {
+        throw new ForbiddenException("Bu userni o'chira olmaysiz");
+      }
+    }
+    // SELLER - o'chira olmaydi
+    else if (currentUser.role === Role.SELLER) {
+      throw new ForbiddenException("User o'chirish huquqi yo'q");
+    } else {
+      throw new ForbiddenException("Ruxsat yo'q");
+    }
 
     await this.prisma.user.delete({ where: { id } });
     return { message: "User muvaffaqiyatli o'chirildi" };
   }
 
-  // User status o'zgartirish
+  // User status o'zgartirish - Role-based access
   async updateStatus(id: string, status: UserStatus, currentUser: User) {
     const user = await this.prisma.user.findUnique({ where: { id } });
     if (!user) {
@@ -269,14 +348,33 @@ export class UsersService {
       throw new ForbiddenException("O'z statusingizni o'zgartira olmaysiz");
     }
 
-    // OWNER faqat o'z xodimlarini bloklaydi
-    if (currentUser.role === Role.OWNER && user.marketId) {
+    // SUPERADMIN - barcha users
+    if ((currentUser.role as any) === 'SUPERADMIN') {
+      // Fall through
+    }
+    // OWNER - o'z xodimlarining status
+    else if (currentUser.role === Role.OWNER && user.marketId) {
       const market = await this.prisma.market.findFirst({
         where: { id: user.marketId, ownerId: currentUser.id },
       });
       if (!market) {
         throw new ForbiddenException("Ruxsat yo'q");
       }
+    }
+    // ADMIN - o'z marketining users
+    else if (currentUser.role === Role.ADMIN) {
+      if (user.marketId !== currentUser.marketId) {
+        throw new ForbiddenException("Ruxsat yo'q");
+      }
+    }
+    // MANAGER, SELLER - o'chira olmaydi
+    else if (
+      currentUser.role === Role.MANAGER ||
+      currentUser.role === Role.SELLER
+    ) {
+      throw new ForbiddenException("Status o'zgartirish huquqi yo'q");
+    } else {
+      throw new ForbiddenException("Ruxsat yo'q");
     }
 
     return this.prisma.user.update({

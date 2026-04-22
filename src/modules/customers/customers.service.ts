@@ -3,6 +3,7 @@ import {
   NotFoundException,
   ForbiddenException,
   ConflictException,
+  BadRequestException,
 } from '@nestjs/common';
 import { PrismaService } from '../../prisma/prisma.service';
 import { CreateCustomerDto } from './dto/create-customer.dto';
@@ -11,7 +12,7 @@ import { Role, User } from '@prisma/client';
 
 @Injectable()
 export class CustomersService {
-  constructor(private prisma: PrismaService) {}
+  constructor(private prisma: PrismaService) { }
 
   // ── Market tekshirish helper ────────────────────────
   private async checkMarketAccess(marketId: string, currentUser: User) {
@@ -40,6 +41,10 @@ export class CustomersService {
 
   // ── 1. Barcha mijozlar ─────────────────────────────
   async findAll(marketId: string, currentUser: User) {
+    if (!marketId || !marketId.trim()) {
+      throw new BadRequestException('Market ID kerak. Marketni tanlang.');
+    }
+
     await this.checkMarketAccess(marketId, currentUser);
 
     return this.prisma.customer.findMany({

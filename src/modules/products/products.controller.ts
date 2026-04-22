@@ -19,7 +19,7 @@ import { ProductsService } from './products.service';
 import { CreateProductDto } from './dto/create-product.dto';
 import { UpdateProductDto } from './dto/update-product.dto';
 import { UpdateProductStatusDto } from './dto/update-status.dto';
-import { CreatePricePlanDto } from './dto/create-price-plan.dto';
+import { GetProductsQueryDto } from './dto/get-products-query.dto';
 import { AccessTokenGuard } from '../auth/guards/access-token.guard';
 import { RolesGuard } from '../../common/guards/roles.guard';
 import { Roles } from '../../common/decorators/roles.decorator';
@@ -36,9 +36,14 @@ export class ProductsController {
   @Get()
   @Roles(Role.SUPERADMIN, Role.OWNER, Role.ADMIN, Role.MANAGER, Role.SELLER)
   @ApiOperation({ summary: 'Barcha mahsulotlar' })
-  @ApiQuery({ name: 'marketId', required: true })
-  findAll(@Query('marketId') marketId: string, @CurrentUser() user: User) {
-    return this.productsService.findAll(marketId, user);
+  @ApiQuery({
+    name: 'marketId',
+    required: true,
+    example: 'f47ac10b-58cc-4372-a567-0e02b2c3d479',
+  })
+  @ApiQuery({ name: 'search', required: false, example: 'laptop' })
+  findAll(@Query() query: GetProductsQueryDto, @CurrentUser() user: User) {
+    return this.productsService.findAll(query.marketId, query.search, user);
   }
 
   @Post()
@@ -77,45 +82,17 @@ export class ProductsController {
     return this.productsService.updateStatus(id, dto.status, user);
   }
 
+  @Patch(':id/archive')
+  @Roles(Role.SUPERADMIN, Role.OWNER, Role.ADMIN)
+  @ApiOperation({ summary: "Mahsulotni arxivlash (yumshaq o'chirish)" })
+  archive(@Param('id') id: string, @CurrentUser() user: User) {
+    return this.productsService.archiveProduct(id, user);
+  }
+
   @Delete(':id')
   @Roles(Role.SUPERADMIN, Role.OWNER, Role.ADMIN)
-  @ApiOperation({ summary: 'Mahsulotni arxivlash' })
-  remove(@Param('id') id: string, @CurrentUser() user: User) {
-    return this.productsService.remove(id, user);
-  }
-
-  // ── Price Plans ──────────────────────────────────
-  @Post(':id/price-plans')
-  @Roles(Role.SUPERADMIN, Role.OWNER, Role.ADMIN)
-  @ApiOperation({ summary: "Narx rejasi qo'shish" })
-  createPricePlan(
-    @Param('id') id: string,
-    @Body() dto: CreatePricePlanDto,
-    @CurrentUser() user: User,
-  ) {
-    return this.productsService.createPricePlan(id, dto, user);
-  }
-
-  @Patch(':id/price-plans/:planId')
-  @Roles(Role.SUPERADMIN, Role.OWNER, Role.ADMIN)
-  @ApiOperation({ summary: 'Narx rejasi tahrirlash' })
-  updatePricePlan(
-    @Param('id') id: string,
-    @Param('planId') planId: string,
-    @Body() dto: CreatePricePlanDto,
-    @CurrentUser() user: User,
-  ) {
-    return this.productsService.updatePricePlan(id, planId, dto, user);
-  }
-
-  @Delete(':id/price-plans/:planId')
-  @Roles(Role.SUPERADMIN, Role.OWNER, Role.ADMIN)
-  @ApiOperation({ summary: "Narx rejasi o'chirish" })
-  removePricePlan(
-    @Param('id') id: string,
-    @Param('planId') planId: string,
-    @CurrentUser() user: User,
-  ) {
-    return this.productsService.removePricePlan(id, planId, user);
+  @ApiOperation({ summary: "Mahsulotni butunlay o'chirish (doimiy o'chirish)" })
+  delete(@Param('id') id: string, @CurrentUser() user: User) {
+    return this.productsService.deleteProduct(id, user);
   }
 }
