@@ -12,7 +12,7 @@ import { Role, User } from '@prisma/client';
 
 @Injectable()
 export class SubscriptionsService {
-  constructor(private prisma: PrismaService) {}
+  constructor(private prisma: PrismaService) { }
 
   // ── 1. Barcha planlar ──────────────────────────────
   async findAllPlans() {
@@ -107,15 +107,9 @@ export class SubscriptionsService {
         throw new BadRequestException(
           `Siz allaqachon obunasiz. Obuna ${currentUser.subEndDate.toLocaleDateString('uz-UZ')} gacha faol`,
         );
-      } else {
-        // Obuna tugagan - yangi sotib olishi mumkin
-        console.log(
-          `Subscription expired, user can buy new one. Old end date: ${currentUser.subEndDate.toLocaleDateString('uz-UZ')}`,
-        );
       }
     } else {
       // Hech qanday obuna yo'q - sotib olishi mumkin
-      console.log('User has no subscription, can buy new one');
     }
 
     const plan = await this.prisma.subscriptionPlan.findUnique({
@@ -151,15 +145,19 @@ export class SubscriptionsService {
 
     return {
       message: 'Obuna muvaffaqiyatli faollashtirildi',
+      subscription: {
+        plan: {
+          id: plan.id,
+          name: plan.name,
+          duration: plan.duration,
+          price: plan.price.toString(),
+        },
+        startDate: startDate.toISOString(),
+        endDate: endDate.toISOString(),
+      },
       payment: {
         id: payment.id,
-        amount: payment.amount,
-        startDate: payment.startDate,
-        endDate: payment.endDate,
-      },
-      plan: {
-        name: plan.name,
-        duration: plan.duration,
+        amount: payment.amount.toString(),
       },
     };
   }
@@ -195,8 +193,8 @@ export class SubscriptionsService {
     const isActive = user.subEndDate ? user.subEndDate > now : false;
     const daysLeft = user.subEndDate
       ? Math.ceil(
-          (user.subEndDate.getTime() - now.getTime()) / (1000 * 60 * 60 * 24),
-        )
+        (user.subEndDate.getTime() - now.getTime()) / (1000 * 60 * 60 * 24),
+      )
       : 0;
 
     return {

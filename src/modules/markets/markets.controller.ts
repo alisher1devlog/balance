@@ -32,7 +32,7 @@ import { Role, User } from '@prisma/client';
 @UseGuards(AccessTokenGuard)
 @Controller('markets')
 export class MarketsController {
-  constructor(private marketsService: MarketsService) {}
+  constructor(private marketsService: MarketsService) { }
 
   @Post()
   @UseGuards(RolesGuard)
@@ -49,6 +49,22 @@ export class MarketsController {
   @ApiOperation({ summary: "O'z do'konlarini ko'rish" })
   findMyMarkets(@CurrentUser('id') userId: string) {
     return this.marketsService.findMyMarkets(userId);
+  }
+
+  @Get('my-market/info')
+  @UseGuards(RolesGuard)
+  @Roles(Role.ADMIN, Role.MANAGER, Role.SELLER)
+  @ApiOperation({ summary: "O'z ishlayotgan marketni ko'rish (ADMIN, MANAGER, SELLER)" })
+  @ApiResponse({
+    status: 200,
+    description: "O'z marketining ma'lumotlari",
+  })
+  @ApiResponse({
+    status: 404,
+    description: "Market topilmadi",
+  })
+  getMyMarket(@CurrentUser() currentUser: User) {
+    return this.marketsService.getMyMarket(currentUser);
   }
 
   @Get(':id/users')

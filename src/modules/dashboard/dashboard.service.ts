@@ -4,21 +4,26 @@ import { Role, User } from '@prisma/client';
 
 @Injectable()
 export class DashboardService {
-  constructor(private prisma: PrismaService) {}
+  constructor(private prisma: PrismaService) { }
 
   async getSummary(marketId: string, currentUser: User) {
-    // Market access
-    if (currentUser.role === Role.OWNER) {
+    // Market access control
+    if ((currentUser.role as any) === 'SUPERADMIN') {
+      // SUPERADMIN - all markets
+    } else if (currentUser.role === Role.OWNER) {
       const market = await this.prisma.market.findFirst({
         where: { id: marketId, ownerId: currentUser.id },
       });
       if (!market) throw new ForbiddenException("Bu marketga ruxsat yo'q");
     } else if (
       currentUser.role === Role.ADMIN ||
-      currentUser.role === Role.MANAGER
+      currentUser.role === Role.MANAGER ||
+      currentUser.role === Role.SELLER
     ) {
       if (currentUser.marketId !== marketId)
         throw new ForbiddenException("Bu marketga ruxsat yo'q");
+    } else {
+      throw new ForbiddenException("Ruxsat yo'q");
     }
 
     const now = new Date();

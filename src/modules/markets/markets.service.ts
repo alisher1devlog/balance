@@ -3,6 +3,7 @@ import {
   NotFoundException,
   ForbiddenException,
   BadRequestException,
+  ConflictException,
 } from '@nestjs/common';
 import { PrismaService } from '../../prisma/prisma.service';
 import { CreateMarketDto } from './dto/create-market.dto';
@@ -12,7 +13,7 @@ import { MarketStatus, User } from '@prisma/client';
 
 @Injectable()
 export class MarketsService {
-  constructor(private prisma: PrismaService) {}
+  constructor(private prisma: PrismaService) { }
 
   // ── 1. Do'kon yaratish ─────────────────────────────
   async create(dto: CreateMarketDto, userId: string) {
@@ -45,6 +46,43 @@ export class MarketsService {
       },
       orderBy: { createdAt: 'desc' },
     });
+  }
+
+  // ── 2.5. Xodim o'zining marketini ko'rish ────────────
+  async getMyMarket(currentUser: User) {
+    if (!currentUser.marketId) {
+      throw new NotFoundException(
+        'Siz hech qanday marketga tayinlanmagansiz',
+      );
+    }
+
+    const market = await this.prisma.market.findUnique({
+      where: { id: currentUser.marketId },
+      include: {
+        owner: {
+          select: {
+            id: true,
+            fullName: true,
+            phone: true,
+            email: true,
+          },
+        },
+        _count: {
+          select: {
+            workers: true,
+            products: true,
+            customers: true,
+            contracts: true,
+          },
+        },
+      },
+    });
+
+    if (!market) {
+      throw new NotFoundException("Do'kon topilmadi");
+    }
+
+    return market;
   }
 
   // ── 3. Do'konning xodimlarini ko'rish ────────────────
@@ -89,10 +127,6 @@ export class MarketsService {
       where.status = query.status;
     }
 
-    if (query.role) {
-      where.role = query.role;
-    }
-
     // Search - ism, email, telefon
     if (query.search && query.search.trim() !== '') {
       where.OR = [
@@ -118,12 +152,7 @@ export class MarketsService {
     }
 
     // Sorting
-    const orderBy: any = {};
-    if (query.sortBy === 'fullName') {
-      orderBy.fullName = query.order || 'asc';
-    } else {
-      orderBy.createdAt = query.order || 'desc';
-    }
+    const orderBy: any = { createdAt: query.order || 'desc' };
 
     // Parallel queries
     const [users, total] = await Promise.all([
@@ -190,6 +219,19 @@ export class MarketsService {
 
     if (market.ownerId !== userId) {
       throw new ForbiddenException("Bu do'konni o'chirish huquqi yo'q");
+    }
+
+    // Check for related records
+    const [customersCount, productsCount, contractsCount] = await Promise.all([
+      this.prisma.customer.count({ where: { marketId: id } }),
+      this.prisma.product.count({ where: { marketId: id } }),
+      this.prisma.contract.count({ where: { marketId: id } }),
+    ]);
+
+    if (customersCount > 0 || productsCount > 0 || contractsCount > 0) {
+      throw new ConflictException(
+        `Bu do'konda ${customersCount} mijoz, ${productsCount} mahsulot va ${contractsCount} shartnoma bor. Ularni o'chirib yuborishdik kerak.`,
+      );
     }
 
     await this.prisma.market.delete({ where: { id } });

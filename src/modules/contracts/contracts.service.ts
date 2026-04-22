@@ -6,8 +6,10 @@ import {
 } from '@nestjs/common';
 import { PrismaService } from '../../prisma/prisma.service';
 import { CreateContractDto } from './dto/create-contract.dto';
+import { CreateSimpleContractDto } from './dto/create-simple-contract.dto';
 import { UpdateContractDto } from './dto/update-contract.dto';
 import { PayInstallmentDto } from './dto/pay-installment.dto';
+import { CalculateContractDto } from './dto/calculate-contract.dto';
 import {
   Role,
   User,
@@ -57,11 +59,52 @@ export class ContractsService {
   }
 
   // ── 1. Barcha shartnomalar ─────────────────────────
-  async findAll(marketId: string, currentUser: User) {
-    await this.checkMarketAccess(marketId, currentUser);
+  async findAll(marketId: string, search?: string, currentUser?: User) {
+    await this.checkMarketAccess(marketId, currentUser as User);
+
+    // Normalize search query
+    const searchQuery = search ? search.trim() : '';
+    const hasSearch = searchQuery.length > 0;
+
+    // Build where clause with conditional search
+    const where: any = hasSearch
+      ? {
+          marketId,
+          OR: [
+            {
+              contractNumber: {
+                contains: searchQuery,
+                mode: 'insensitive' as const,
+              },
+            },
+            { note: { contains: searchQuery, mode: 'insensitive' as const } },
+            {
+              customer: {
+                fullName: {
+                  contains: searchQuery,
+                  mode: 'insensitive' as const,
+                },
+              },
+            },
+            {
+              customer: {
+                phone: { contains: searchQuery, mode: 'insensitive' as const },
+              },
+            },
+            {
+              staff: {
+                fullName: {
+                  contains: searchQuery,
+                  mode: 'insensitive' as const,
+                },
+              },
+            },
+          ],
+        }
+      : { marketId };
 
     return this.prisma.contract.findMany({
-      where: { marketId },
+      where,
       select: {
         id: true,
         contractNumber: true,
@@ -100,53 +143,82 @@ export class ContractsService {
   async create(dto: CreateContractDto, currentUser: User) {
     await this.checkMarketAccess(dto.marketId, currentUser);
 
-    // Mahsulot va narx rejalarini olish
+    const customer = await this.prisma.customer.findUnique({
+      where: { id: dto.customerId },
+    });
+    if (!customer) {
+      throw new NotFoundException(
+        `Xaridor topilmadi: ID ${dto.customerId}. Xaridor ID to'g'ri ekanligini tekshiring.`,
+      );
+    }
+
+    if (customer.marketId !== dto.marketId) {
+      throw new BadRequestException(
+        `Xaridor "${customer.fullName}" boshqa bozorga tegishli. Undo marketId: ${customer.marketId}`,
+      );
+    }
+
+    const downPayment = dto.downPayment ?? 0;
     let totalAmount = 0;
     let monthlyAmount = 0;
 
+    // ──── 1. Validate all products exist and have sufficient stock ────
     const itemsData = await Promise.all(
       dto.items.map(async (item) => {
         const product = await this.prisma.product.findUnique({
           where: { id: item.productId },
+          select: { id: true, name: true, basePrice: true, stock: true },
         });
-        if (!product)
-          throw new NotFoundException(`Mahsulot topilmadi: ${item.productId}`);
 
-        const pricePlan = await this.prisma.productPricePlan.findUnique({
-          where: { id: item.pricePlanId },
-        });
-        if (!pricePlan)
+        if (!product) {
           throw new NotFoundException(
-            `Narx rejasi topilmadi: ${item.pricePlanId}`,
-          );
-
-        if (pricePlan.termMonths !== dto.termMonths) {
-          throw new BadRequestException(
-            `Narx rejasi muddati (${pricePlan.termMonths} oy) shartnoma muddatiga (${dto.termMonths} oy) mos kelmaydi`,
+            `Mahsulot topilmadi: ID ${item.productId}. Mahsulot ID to'g'ri ekanligini tekshiring.`,
           );
         }
 
-        const itemTotal = Number(pricePlan.totalPrice) * item.quantity;
-        const itemMonthly = Number(pricePlan.monthlyPrice) * item.quantity;
+        const quantity = item.quantity; // Use exact value, already validated by DTO
 
+        // Stock validation with proper error message
+        if (product.stock < quantity) {
+          throw new BadRequestException(
+            `Mahsulot yetarli emas. "${product.name}" uchun omborda ${product.stock} ta mavjud, siz ${quantity} ta so'radingiz`,
+          );
+        }
+
+        const itemTotal = Number(product.basePrice) * quantity;
         totalAmount += itemTotal;
-        monthlyAmount += itemMonthly;
 
         return {
           productId: item.productId,
-          pricePlanId: item.pricePlanId,
           productName: product.name,
-          quantity: item.quantity,
-          basePrice: product.basePrice,
-          interestRate: pricePlan.interestRate,
-          totalPrice: pricePlan.totalPrice,
-          monthlyPrice: pricePlan.monthlyPrice,
+          quantity,
+          unitPrice: product.basePrice,
+          totalPrice: itemTotal,
         };
       }),
     );
 
-    const downPayment = dto.downPayment ?? 0;
+    // ──── 2. Validate calculation fields ────
     const remainAmount = totalAmount - downPayment;
+
+    if (remainAmount < 0) {
+      throw new BadRequestException(
+        `Boshlang'ich to'lov umumiy summadan katta bo'lishi mumkin emas (To'lov: ${downPayment.toLocaleString()}, Jami: ${totalAmount.toLocaleString()})`,
+      );
+    }
+
+    // ──── 3. Validate term months ────
+    if (dto.termMonths < 1) {
+      throw new BadRequestException("Muddat kamida 1 oy bo'lishi kerak");
+    }
+
+    if (dto.termMonths > 60) {
+      throw new BadRequestException(
+        "Shartnoma davomiyligi 60 oydan ko'p bo'lmaydi",
+      );
+    }
+
+    monthlyAmount = remainAmount / dto.termMonths;
 
     const startDate = new Date(dto.startDate);
     const endDate = new Date(startDate);
@@ -154,9 +226,7 @@ export class ContractsService {
 
     const contractNumber = await this.generateContractNumber();
 
-    // Shartnoma va installmentlarni transaction ichida yaratish
     const contract = await this.prisma.$transaction(async (tx) => {
-      // Shartnoma yaratish
       const newContract = await tx.contract.create({
         data: {
           contractNumber,
@@ -174,7 +244,7 @@ export class ContractsService {
           status: ContractStatus.ACTIVE,
           note: dto.note,
           items: {
-            create: itemsData,
+            create: itemsData as any,
           },
         },
         include: {
@@ -185,7 +255,6 @@ export class ContractsService {
         },
       });
 
-      // Boshlang'ich to'lov transaction
       if (downPayment > 0) {
         await tx.transaction.create({
           data: {
@@ -198,7 +267,6 @@ export class ContractsService {
         });
       }
 
-      // Installmentlar yaratish
       const installments = [];
       for (let i = 0; i < dto.termMonths; i++) {
         const dueDate = new Date(startDate);
@@ -215,7 +283,7 @@ export class ContractsService {
 
       await tx.installment.createMany({ data: installments });
 
-      // Mahsulot stockini kamaytirish
+      // ──── Decrement product stock (safe within transaction) ────
       for (const item of dto.items) {
         await tx.product.update({
           where: { id: item.productId },
@@ -227,6 +295,144 @@ export class ContractsService {
     });
 
     return contract;
+  }
+
+  // ── 2b. Shartnoma yaratish (sodda forma) ──────────
+  async createSimple(dto: CreateSimpleContractDto, currentUser: User) {
+    // Xaridorni topish
+    const customer = await this.prisma.customer.findUnique({
+      where: { id: dto.customerId },
+      select: { id: true, marketId: true, fullName: true },
+    });
+
+    if (!customer) {
+      throw new NotFoundException(`Xaridor topilmadi: ID ${dto.customerId}`);
+    }
+
+    // Mahsulotni topish
+    const product = await this.prisma.product.findUnique({
+      where: { id: dto.productId },
+      select: { id: true, name: true, basePrice: true, stock: true },
+    });
+
+    if (!product) {
+      throw new NotFoundException(`Mahsulot topilmadi: ID ${dto.productId}`);
+    }
+
+    // Sotuvdan oldin ombor tekshirish
+    if (product.stock < 1) {
+      throw new BadRequestException(
+        `"${product.name}" mahsulotning omborida yetarli miqdori yo'q (Hozir: ${product.stock} dona)`,
+      );
+    }
+
+    // Boshlang'ich to'lovni tekshirish
+    const downPayment = dto.downPayment ?? 0;
+    const productPrice = Number(product.basePrice);
+
+    if (downPayment < 0) {
+      throw new BadRequestException("Boshlang'ich to'lov manfiy bo'lmaydi");
+    }
+
+    if (downPayment > productPrice) {
+      throw new BadRequestException(
+        `Boshlang\'ich to\'lov (${downPayment.toLocaleString()}) mahsulot narxidan (${productPrice.toLocaleString()}) ko'p bo'lmaydi`,
+      );
+    }
+
+    // Muddat tekshirish
+    if (dto.months < 1) {
+      throw new BadRequestException(
+        "Shartnoma davomiyligi kamida 1 oy bo'lishi kerak",
+      );
+    }
+
+    if (dto.months > 60) {
+      throw new BadRequestException(
+        "Shartnoma davomiyligi 60 oydan ko'p bo'lmaydi",
+      );
+    }
+
+    // Hisob-kitoblarni bajarish
+    const remainAmount = productPrice - downPayment;
+    const monthlyAmount = remainAmount / dto.months;
+
+    // Shartnomayon sanalarini tuzish
+    const startDate = new Date();
+    startDate.setHours(0, 0, 0, 0); // Vaqtni null qilish
+    const endDate = new Date(startDate);
+    endDate.setMonth(endDate.getMonth() + dto.months);
+
+    const contractNumber = await this.generateContractNumber();
+
+    // Shartnomayon yaratish (kompleks formatda)
+    const createDto: CreateContractDto = {
+      marketId: customer.marketId,
+      customerId: dto.customerId,
+      termMonths: dto.months,
+      downPayment,
+      startDate: startDate.toISOString().split('T')[0], // YYYY-MM-DD formatida
+      note: `Soddalashtirilgan forma orqali yaratilgan`,
+      items: [
+        {
+          productId: dto.productId,
+          quantity: 1,
+        },
+      ],
+    };
+
+    return this.create(createDto, currentUser);
+  }
+
+  // ── 2a. Shartnoma hisob-kitoblarini hisoblash ──────
+  async calculate(dto: CalculateContractDto, currentUser: User) {
+    const product = await this.prisma.product.findUnique({
+      where: { id: dto.productId },
+      select: { id: true, name: true, basePrice: true },
+    });
+
+    if (!product) {
+      throw new NotFoundException(
+        `Mahsulot topilmadi: ID ${dto.productId}. Mahsulot ID to'g'ri ekanligini tekshiring.`,
+      );
+    }
+
+    if (dto.downPayment < 0) {
+      throw new BadRequestException(
+        `Boshlang'ich to'lov manfiy bo'lmaydi (Qiymat: ${dto.downPayment})`,
+      );
+    }
+
+    const productPrice = Number(product.basePrice);
+
+    if (dto.downPayment > productPrice) {
+      throw new BadRequestException(
+        `Boshlang'ich to'lov (${dto.downPayment.toLocaleString()}) "${product.name}" narxidan (${productPrice.toLocaleString()}) ko'p bo'lmaydi`,
+      );
+    }
+
+    if (dto.months <= 0) {
+      throw new BadRequestException(
+        `Muddat 1 oydan kam bo'lmaydi (Qiymat: ${dto.months})`,
+      );
+    }
+
+    if (dto.months > 60) {
+      throw new BadRequestException(
+        `Muddat 60 oydan ko'p bo'lmaydi (Qiymat: ${dto.months})`,
+      );
+    }
+
+    const remainingAmount = productPrice - dto.downPayment;
+    const monthlyPayment = remainingAmount / dto.months;
+
+    return {
+      productPrice,
+      downPayment: dto.downPayment,
+      remainingAmount,
+      months: dto.months,
+      monthlyPayment: Math.round(monthlyPayment * 100) / 100,
+    };
   }
 
   // ── 3. Bitta shartnoma ─────────────────────────────

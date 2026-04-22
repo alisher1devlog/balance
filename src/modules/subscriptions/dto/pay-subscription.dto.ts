@@ -1,8 +1,9 @@
-import { IsUUID } from 'class-validator';
+import { IsUUID, IsNotEmpty } from 'class-validator';
 import { ApiProperty } from '@nestjs/swagger';
 
 export class PaySubscriptionDto {
-  @ApiProperty({ example: 'plan-uuid' })
+  @ApiProperty({ example: 'plan-uuid', description: 'Subscription plan UUID' })
   @IsUUID()
-  planId: string = '';
+  @IsNotEmpty()
+  planId!: string;
 }
