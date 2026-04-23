@@ -8,46 +8,64 @@ import {
 import { PrismaService } from '../../prisma/prisma.service';
 import { CreateUserDto } from './dto/create-user.dto';
 import { UpdateUserDto } from './dto/update-user.dto';
-import { Role, User, UserStatus } from '@prisma/client';
+import { Prisma, Role, User, UserStatus } from '@prisma/client';
 import * as bcrypt from 'bcrypt';
 
 @Injectable()
 export class UsersService {
   constructor(private prisma: PrismaService) { }
 
+  private readonly defaultUserStatus = UserStatus.ACTIVE;
+
+  private readonly userSelect = {
+    id: true,
+    fullName: true,
+    email: true,
+    phone: true,
+    role: true,
+    status: true,
+    marketId: true,
+    createdAt: true,
+    updatedAt: true,
+  } as const;
+
+  private mapUserStatus(status: UserStatus | null | undefined): UserStatus {
+    return status ?? this.defaultUserStatus;
+  }
+
+  private serializeUser<T extends { status?: UserStatus | null }>(user: T) {
+    return {
+      ...user,
+      status: this.mapUserStatus(user.status),
+    };
+  }
+
   // Barcha userlar - Role-based filtering
   async findAll(currentUser: User) {
-    const select = {
-      id: true,
-      fullName: true,
-      email: true,
-      phone: true,
-      role: true,
-      status: true,
-      marketId: true,
-      createdAt: true,
-    };
-
     // SUPERADMIN - barcha users
     if ((currentUser.role as any) === 'SUPERADMIN') {
-      return this.prisma.user.findMany({
-        select,
+      const users = await this.prisma.user.findMany({
+        select: this.userSelect,
         orderBy: { createdAt: 'desc' },
       });
+
+      return users.map((user) => this.serializeUser(user));
     }
 
     // OWNER - faqat o'z marketining users
     if (currentUser.role === Role.OWNER) {
-      return this.prisma.user.findMany({
+      const users = await this.prisma.user.findMany({
         where: {
           marketId: { not: null },
           workMarket: {
             ownerId: currentUser.id,
           },
         },
-        select,
+        select: this.userSelect,
         orderBy: { createdAt: 'desc' },
       });
+
+      return users.map((user) => this.serializeUser(user));
     }
 
     // ADMIN, MANAGER, SELLER - faqat o'z marketining users
@@ -60,13 +78,15 @@ export class UsersService {
         throw new ForbiddenException('Market tayinlanmagan');
       }
 
-      return this.prisma.user.findMany({
+      const users = await this.prisma.user.findMany({
         where: {
           marketId: currentUser.marketId,
         },
-        select,
+        select: this.userSelect,
         orderBy: { createdAt: 'desc' },
       });
+
+      return users.map((user) => this.serializeUser(user));
     }
 
     throw new ForbiddenException("Ruxsat yo'q");
@@ -152,43 +172,38 @@ export class UsersService {
 
     const hashedPassword = await bcrypt.hash(dto.password, 10);
 
-    return this.prisma.user.create({
-      data: {
-        fullName: dto.fullName,
-        email: dto.email,
-        phone: dto.phone,
-        password: hashedPassword,
-        role: dto.role,
-        marketId: dto.marketId,
-        status: 'ACTIVE',
-      },
-      select: {
-        id: true,
-        fullName: true,
-        email: true,
-        phone: true,
-        role: true,
-        status: true,
-        marketId: true,
-        createdAt: true,
-      },
-    });
+    try {
+      const createdUser = await this.prisma.user.create({
+        data: {
+          fullName: dto.fullName,
+          email: dto.email,
+          phone: dto.phone,
+          password: hashedPassword,
+          role: dto.role,
+          marketId: dto.marketId,
+          status: this.defaultUserStatus,
+        },
+        select: this.userSelect,
+      });
+
+      return this.serializeUser(createdUser);
+    } catch (error) {
+      if (
+        error instanceof Prisma.PrismaClientKnownRequestError &&
+        error.code === 'P2002'
+      ) {
+        throw new ConflictException("User yaratishda takroriy ma'lumot aniqlandi");
+      }
+
+      throw new BadRequestException("User yaratishda xatolik yuz berdi");
+    }
   }
 
   // Bitta user - Role-based access
   async findOne(id: string, currentUser: User) {
     const user = await this.prisma.user.findUnique({
       where: { id },
-      select: {
-        id: true,
-        fullName: true,
-        email: true,
-        phone: true,
-        role: true,
-        status: true,
-        marketId: true,
-        createdAt: true,
-      },
+      select: this.userSelect,
     });
 
     if (!user) {
@@ -197,7 +212,7 @@ export class UsersService {
 
     // SUPERADMIN - barcha users
     if ((currentUser.role as any) === 'SUPERADMIN') {
-      return user;
+      return this.serializeUser(user);
     }
 
     // OWNER - faqat o'z xodimlarini ko'radi
@@ -210,7 +225,7 @@ export class UsersService {
           throw new ForbiddenException("Ruxsat yo'q");
         }
       }
-      return user;
+      return this.serializeUser(user);
     }
 
     // ADMIN, MANAGER, SELLER - faqat o'z marketining users
@@ -222,7 +237,7 @@ export class UsersService {
       if (user.marketId !== currentUser.marketId) {
         throw new ForbiddenException("Ruxsat yo'q");
       }
-      return user;
+      return this.serializeUser(user);
     }
 
     throw new ForbiddenException("Ruxsat yo'q");
@@ -266,7 +281,7 @@ export class UsersService {
       throw new ForbiddenException("Ruxsat yo'q");
     }
 
-    return this.prisma.user.update({
+    const updatedUser = await this.prisma.user.update({
       where: { id },
       data: {
         ...(dto.fullName && { fullName: dto.fullName }),
@@ -274,17 +289,10 @@ export class UsersService {
         ...(dto.role && { role: dto.role }),
         ...(dto.marketId && { marketId: dto.marketId }),
       },
-      select: {
-        id: true,
-        fullName: true,
-        email: true,
-        phone: true,
-        role: true,
-        status: true,
-        marketId: true,
-        createdAt: true,
-      },
+      select: this.userSelect,
     });
+
+    return this.serializeUser(updatedUser);
   }
 
   // User o'chirish - Role-based access
@@ -339,6 +347,10 @@ export class UsersService {
 
   // User status o'zgartirish - Role-based access
   async updateStatus(id: string, status: UserStatus, currentUser: User) {
+    if (!Object.values(UserStatus).includes(status)) {
+      throw new BadRequestException("Noto'g'ri user status yuborildi");
+    }
+
     const user = await this.prisma.user.findUnique({ where: { id } });
     if (!user) {
       throw new NotFoundException('User topilmadi');
@@ -377,14 +389,12 @@ export class UsersService {
       throw new ForbiddenException("Ruxsat yo'q");
     }
 
-    return this.prisma.user.update({
+    const updatedUser = await this.prisma.user.update({
       where: { id },
       data: { status },
-      select: {
-        id: true,
-        fullName: true,
-        status: true,
-      },
+      select: this.userSelect,
     });
+
+    return this.serializeUser(updatedUser);
   }
 }

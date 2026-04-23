@@ -9,11 +9,20 @@ import { PrismaService } from '../../prisma/prisma.service';
 import { CreateMarketDto } from './dto/create-market.dto';
 import { UpdateMarketDto } from './dto/update-market.dto';
 import { GetMarketUsersQueryDto } from './dto/get-market-users-query.dto';
-import { MarketStatus, User } from '@prisma/client';
+import { MarketStatus, User, UserStatus } from '@prisma/client';
 
 @Injectable()
 export class MarketsService {
   constructor(private prisma: PrismaService) { }
+
+  private readonly defaultUserStatus = UserStatus.ACTIVE;
+
+  private serializeMarketUser<T extends { status?: UserStatus | null }>(user: T) {
+    return {
+      ...user,
+      status: user.status ?? this.defaultUserStatus,
+    };
+  }
 
   // ── 1. Do'kon yaratish ─────────────────────────────
   async create(dto: CreateMarketDto, userId: string) {
@@ -167,6 +176,7 @@ export class MarketsService {
           marketId: true,
           phone: true,
           createdAt: true,
+          updatedAt: true,
         },
         skip,
         take: limit,
@@ -178,7 +188,7 @@ export class MarketsService {
     const totalPages = Math.ceil(total / limit);
 
     return {
-      data: users,
+      data: users.map((user) => this.serializeMarketUser(user)),
       meta: {
         page,
         limit,

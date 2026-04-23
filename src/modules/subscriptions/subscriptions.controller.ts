@@ -75,6 +75,15 @@ export class SubscriptionsController {
     return this.subscriptionsService.pay(dto, currentUser);
   }
 
+  @Post('cancel')
+  @UseGuards(AccessTokenGuard, RolesGuard)
+  @Roles(Role.OWNER)
+  @ApiBearerAuth('access-token')
+  @ApiOperation({ summary: "Joriy obunani bekor qilish (Owner)" })
+  cancel(@CurrentUser() currentUser: User) {
+    return this.subscriptionsService.cancel(currentUser);
+  }
+
   @Get('current')
   @UseGuards(AccessTokenGuard, RolesGuard)
   @Roles(Role.OWNER)

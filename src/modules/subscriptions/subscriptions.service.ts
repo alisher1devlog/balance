@@ -3,6 +3,7 @@ import {
   NotFoundException,
   ForbiddenException,
   BadRequestException,
+  ConflictException,
 } from '@nestjs/common';
 import { PrismaService } from '../../prisma/prisma.service';
 import { CreatePlanDto } from './dto/create-plan.dto';
@@ -13,6 +14,30 @@ import { Role, User } from '@prisma/client';
 @Injectable()
 export class SubscriptionsService {
   constructor(private prisma: PrismaService) { }
+
+  private hasActiveSubscription(user: Pick<User, 'planId' | 'subEndDate'>) {
+    return Boolean(user.planId && user.subEndDate && user.subEndDate > new Date());
+  }
+
+  private async getUserSubscriptionState(userId: string) {
+    return this.prisma.user.findUnique({
+      where: { id: userId },
+      select: {
+        id: true,
+        planId: true,
+        subEndDate: true,
+        plan: {
+          select: {
+            id: true,
+            name: true,
+            duration: true,
+            price: true,
+            description: true,
+          },
+        },
+      },
+    });
+  }
 
   // ── 1. Barcha planlar ──────────────────────────────
   async findAllPlans() {
@@ -87,6 +112,12 @@ export class SubscriptionsService {
       throw new ForbiddenException("Faqat OWNER obuna to'lay oladi");
     }
 
+    const user = await this.getUserSubscriptionState(currentUser.id);
+
+    if (!user) {
+      throw new NotFoundException('Foydalanuvchi topilmadi');
+    }
+
     // Market tekshirish
     const market = await this.prisma.market.findFirst({
       where: { ownerId: currentUser.id },
@@ -98,20 +129,13 @@ export class SubscriptionsService {
       );
     }
 
-    // Subscription holati tekshirish
-    const now = new Date();
-
-    if (currentUser.subEndDate) {
-      if (currentUser.subEndDate > now) {
-        // Obuna faol
-        throw new BadRequestException(
-          `Siz allaqachon obunasiz. Obuna ${currentUser.subEndDate.toLocaleDateString('uz-UZ')} gacha faol`,
-        );
-      }
-    } else {
-      // Hech qanday obuna yo'q - sotib olishi mumkin
+    if (this.hasActiveSubscription(user)) {
+      throw new ConflictException(
+        'Sizda faol obuna mavjud. Yangi obuna olish uchun avval amaldagi obunani bekor qiling.',
+      );
     }
 
+    const now = new Date();
     const plan = await this.prisma.subscriptionPlan.findUnique({
       where: { id: dto.planId },
     });
@@ -162,28 +186,47 @@ export class SubscriptionsService {
     };
   }
 
+  async cancel(currentUser: User) {
+    if (currentUser.role !== Role.OWNER) {
+      throw new ForbiddenException('Faqat OWNER uchun');
+    }
+
+    const user = await this.getUserSubscriptionState(currentUser.id);
+
+    if (!user) {
+      throw new NotFoundException('Foydalanuvchi topilmadi');
+    }
+
+    if (!this.hasActiveSubscription(user)) {
+      throw new BadRequestException("Bekor qilish uchun faol obuna topilmadi.");
+    }
+
+    await this.prisma.user.update({
+      where: { id: currentUser.id },
+      data: {
+        planId: null,
+        subEndDate: null,
+      },
+    });
+
+    return {
+      message: 'Obuna muvaffaqiyatli bekor qilindi.',
+      subscription: {
+        plan: user.plan,
+        subEndDate: null,
+        isActive: false,
+        cancelledAt: new Date().toISOString(),
+      },
+    };
+  }
+
   // ── 7. Joriy obuna (OWNER) ─────────────────────────
   async getCurrent(currentUser: User) {
     if (currentUser.role !== Role.OWNER) {
       throw new ForbiddenException('Faqat OWNER uchun');
     }
 
-    const user = await this.prisma.user.findUnique({
-      where: { id: currentUser.id },
-      select: {
-        planId: true,
-        subEndDate: true,
-        plan: {
-          select: {
-            id: true,
-            name: true,
-            duration: true,
-            price: true,
-            description: true,
-          },
-        },
-      },
-    });
+    const user = await this.getUserSubscriptionState(currentUser.id);
 
     if (!user?.planId) {
       return { message: "Faol obuna yo'q", subscription: null };

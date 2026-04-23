@@ -8,11 +8,46 @@ import {
 import { PrismaService } from '../../prisma/prisma.service';
 import { CreateCustomerDto } from './dto/create-customer.dto';
 import { UpdateCustomerDto } from './dto/update-customer.dto';
-import { Role, User } from '@prisma/client';
+import { Prisma, Role, User } from '@prisma/client';
 
 @Injectable()
 export class CustomersService {
   constructor(private prisma: PrismaService) { }
+
+  private normalizePassportSeria(passportSeria?: string | null) {
+    const normalized = passportSeria?.trim();
+    return normalized ? normalized : null;
+  }
+
+  private async ensurePassportSeriaUnique(
+    passportSeria: string | null,
+    customerId?: string,
+  ) {
+    if (!passportSeria) return;
+
+    const existing = await this.prisma.customer.findFirst({
+      where: {
+        passportSeria,
+        ...(customerId ? { id: { not: customerId } } : {}),
+      },
+      select: { id: true },
+    });
+
+    if (existing) {
+      throw new ConflictException('Bu passport seriya allaqachon mavjud.');
+    }
+  }
+
+  private handleCustomerWriteError(error: unknown): never {
+    if (
+      error instanceof Prisma.PrismaClientKnownRequestError &&
+      error.code === 'P2002'
+    ) {
+      throw new ConflictException('Bu passport seriya allaqachon mavjud.');
+    }
+
+    throw error;
+  }
 
   // ── Market tekshirish helper ────────────────────────
   private async checkMarketAccess(marketId: string, currentUser: User) {
@@ -69,6 +104,7 @@ export class CustomersService {
   // ── 2. Mijoz qo'shish ──────────────────────────────
   async create(dto: CreateCustomerDto, currentUser: User) {
     await this.checkMarketAccess(dto.marketId, currentUser);
+    const passportSeria = this.normalizePassportSeria(dto.passportSeria);
 
     // Telefon takrorlanmasin
     const existing = await this.prisma.customer.findUnique({
@@ -84,28 +120,34 @@ export class CustomersService {
       throw new ConflictException('Bu telefon raqam allaqachon mavjud');
     }
 
-    return this.prisma.customer.create({
-      data: {
-        marketId: dto.marketId,
-        fullName: dto.fullName,
-        phone: dto.phone,
-        address: dto.address,
-        passportSeria: dto.passportSeria,
-        birthDate: dto.birthDate ? new Date(dto.birthDate) : null,
-        note: dto.note,
-      },
-      select: {
-        id: true,
-        fullName: true,
-        phone: true,
-        address: true,
-        passportSeria: true,
-        birthDate: true,
-        note: true,
-        marketId: true,
-        createdAt: true,
-      },
-    });
+    await this.ensurePassportSeriaUnique(passportSeria);
+
+    try {
+      return await this.prisma.customer.create({
+        data: {
+          marketId: dto.marketId,
+          fullName: dto.fullName,
+          phone: dto.phone,
+          address: dto.address,
+          passportSeria,
+          birthDate: dto.birthDate ? new Date(dto.birthDate) : null,
+          note: dto.note,
+        },
+        select: {
+          id: true,
+          fullName: true,
+          phone: true,
+          address: true,
+          passportSeria: true,
+          birthDate: true,
+          note: true,
+          marketId: true,
+          createdAt: true,
+        },
+      });
+    } catch (error) {
+      this.handleCustomerWriteError(error);
+    }
   }
 
   // ── 3. Bitta mijoz ─────────────────────────────────
@@ -151,6 +193,10 @@ export class CustomersService {
     if (!customer) throw new NotFoundException('Mijoz topilmadi');
 
     await this.checkMarketAccess(customer.marketId, currentUser);
+    const passportSeria =
+      dto.passportSeria !== undefined
+        ? this.normalizePassportSeria(dto.passportSeria)
+        : undefined;
 
     // Telefon o'zgarsa takrorlanmasin
     if (dto.phone && dto.phone !== customer.phone) {
@@ -166,27 +212,35 @@ export class CustomersService {
         throw new ConflictException('Bu telefon raqam allaqachon mavjud');
     }
 
-    return this.prisma.customer.update({
-      where: { id },
-      data: {
-        fullName: dto.fullName,
-        phone: dto.phone,
-        address: dto.address,
-        passportSeria: dto.passportSeria,
-        birthDate: dto.birthDate ? new Date(dto.birthDate) : undefined,
-        note: dto.note,
-      },
-      select: {
-        id: true,
-        fullName: true,
-        phone: true,
-        address: true,
-        passportSeria: true,
-        birthDate: true,
-        note: true,
-        updatedAt: true,
-      },
-    });
+    if (passportSeria !== undefined && passportSeria !== customer.passportSeria) {
+      await this.ensurePassportSeriaUnique(passportSeria, customer.id);
+    }
+
+    try {
+      return await this.prisma.customer.update({
+        where: { id },
+        data: {
+          fullName: dto.fullName,
+          phone: dto.phone,
+          address: dto.address,
+          ...(passportSeria !== undefined ? { passportSeria } : {}),
+          birthDate: dto.birthDate ? new Date(dto.birthDate) : undefined,
+          note: dto.note,
+        },
+        select: {
+          id: true,
+          fullName: true,
+          phone: true,
+          address: true,
+          passportSeria: true,
+          birthDate: true,
+          note: true,
+          updatedAt: true,
+        },
+      });
+    } catch (error) {
+      this.handleCustomerWriteError(error);
+    }
   }
 
   // ── 5. Mijoz o'chirish ─────────────────────────────
