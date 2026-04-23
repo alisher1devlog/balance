@@ -124,7 +124,7 @@ model Customer {
   address       String?        @db.VarChar(255)
   birthDate     DateTime?      @map("birth_date")
   note          String?
-  passportSeria String?        @map("passport_seria") @db.VarChar(20)
+  passportSeria String?        @unique @map("passport_seria") @db.VarChar(20)
   contracts     Contract[]
   market        Market         @relation(fields: [marketId], references: [id])
   documents     Document[]
